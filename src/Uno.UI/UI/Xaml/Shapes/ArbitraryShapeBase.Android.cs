@@ -116,8 +116,10 @@ namespace Windows.UI.Xaml.Shapes
             var imageBrushFill = Fill as ImageBrush;
             if (imageBrushFill != null)
             {
-					var bitmapDrawable = new BitmapDrawable(imageBrushFill.TryGetBitmap(drawArea, () => RefreshShape(forceRefresh: true), path));
-					drawables.Add(bitmapDrawable);
+#pragma warning disable CS0618 // Type or member is obsolete
+				var bitmapDrawable = new BitmapDrawable(imageBrushFill.TryGetBitmap(drawArea, () => RefreshShape(forceRefresh: true), path));
+#pragma warning restore CS0618 // Type or member is obsolete
+				drawables.Add(bitmapDrawable);
             }
             else
             {

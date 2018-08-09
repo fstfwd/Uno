@@ -63,11 +63,11 @@ namespace Uno.UI.SourceGenerators.XamlGenerator
         private readonly bool _isUiAutomationMappingEnabled;
         private readonly Dictionary<string, string[]> _uiAutomationMappings;
         private readonly string _relativePath;
-
-        private List<INamedTypeSymbol> _xamlAppliedTypes = new List<INamedTypeSymbol>();
+		private List<INamedTypeSymbol> _xamlAppliedTypes = new List<INamedTypeSymbol>();
 
 		private readonly INamedTypeSymbol _elementStubSymbol;
 		private readonly INamedTypeSymbol _contentPresenterSymbol;
+		private readonly INamedTypeSymbol _stringSymbol;
 		private readonly bool _isWasm;
 
 		// Caches
@@ -121,7 +121,8 @@ namespace Uno.UI.SourceGenerators.XamlGenerator
             _findPropertyTypeByName = Funcs.Create<string, string, INamedTypeSymbol>(SourceFindPropertyType).AsLockedMemoized();
 
             _relativePath = PathHelper.GetRelativePath(_targetPath, _fileDefinition.FilePath);
-            _elementStubSymbol = GetType(XamlConstants.Types.ElementStub);
+			_stringSymbol = GetType("System.String");
+			_elementStubSymbol = GetType(XamlConstants.Types.ElementStub);
 			_contentPresenterSymbol = GetType(XamlConstants.Types.ContentPresenter);
 
 			_isWasm = isWasm;
@@ -863,6 +864,10 @@ namespace Uno.UI.SourceGenerators.XamlGenerator
 				{
 					BuildStyle(writer, keyedResource);
 				}
+				else if (keyedResource.Value.Type.Name == "StaticResource")
+				{
+					// Skip and add it to the global resolver
+				}
 				else if (IsSingleTimeInitializable(keyedResource.Value.Type))
 				{
 					writer.AppendLineInvariant($"public static {GetGlobalizedTypeName(resourceTypeName)} {SanitizeResourceName(resourcePropertyName)} {{{{ get; }}}} = ");
@@ -913,15 +918,24 @@ namespace Uno.UI.SourceGenerators.XamlGenerator
             }
         }
 
-        private static void BuildGetResources(IIndentedStringBuilder writer, IEnumerable<KeyValuePair<string, XamlObjectDefinition>> resources)
+
+		private void BuildGetResources(IIndentedStringBuilder writer, IEnumerable<KeyValuePair<string, XamlObjectDefinition>> resources)
         {
             using (writer.BlockInvariant("switch(name)"))
             {
                 foreach (var resource in resources)
                 {
-                    writer.AppendLineInvariant("case \"{0}\":", resource.Key);
-                    writer.AppendLineInvariant("\treturn {0};", SanitizeResourceName(resource.Key));
-                }
+					if (resource.Value.Type.Name == "StaticResource")
+					{
+						writer.AppendLineInvariant($"case \"{resource.Key}\":");
+						writer.AppendLineInvariant($"\treturn {GetGlobalStaticResource(resource.Key)};");
+					}
+					else
+					{
+						writer.AppendLineInvariant("case \"{0}\":", resource.Key);
+						writer.AppendLineInvariant("\treturn {0};", SanitizeResourceName(resource.Key));
+					}
+				}
             }
 
             writer.AppendLineInvariant("return null;");
@@ -2350,9 +2364,18 @@ namespace Uno.UI.SourceGenerators.XamlGenerator
 
                 targetPropertyType = targetPropertyType ?? FindPropertyType(member.Member);
 
-                return _staticResources.ContainsKey(resourcePath)
-                    ? $"{GetCastString(targetPropertyType, _staticResources[resourcePath])}StaticResources.{SanitizeResourceName(resourcePath)}"
-                    : $"{GetCastString(targetPropertyType, null)}{GetGlobalStaticResource(resourcePath)}";
+				if(_staticResources.ContainsKey(resourcePath))
+				{
+					return $"{GetCastString(targetPropertyType, _staticResources[resourcePath])}StaticResources.{SanitizeResourceName(resourcePath)}";
+				}
+				else if(targetPropertyType.Name == "TimeSpan")
+				{
+					return $"TimeSpan.Parse({GetGlobalStaticResource(resourcePath)}.ToString())";
+				}
+				else
+				{
+					return $"{GetCastString(targetPropertyType, null)}{GetGlobalStaticResource(resourcePath)}";
+				}
             }
         }
 
@@ -2612,7 +2635,11 @@ namespace Uno.UI.SourceGenerators.XamlGenerator
                 {
                     return GetGlobalStaticResource(expression.Members.First().Value?.ToString());
                 }
-                else
+				else if (expression.Type.Name == "NullExtension")
+				{
+					return "null";
+				}
+				else
                 {
                     throw new NotSupportedException("MarkupExtension {0} is not supported.".InvariantCultureFormat(expression.Type.Name));
                 }
@@ -2973,7 +3000,7 @@ namespace Uno.UI.SourceGenerators.XamlGenerator
             }
             else
             {
-                return $"global::Windows.UI.Xaml.Application.Current.Resources[\"{resourceName}\"]";
+                return $"(global::Windows.UI.Xaml.Application.Current.Resources[\"{resourceName}\"] ?? throw new InvalidOperationException(\"Unable to find static resource {resourceName}\"))";
             }
         }
 
@@ -3552,7 +3579,7 @@ namespace Uno.UI.SourceGenerators.XamlGenerator
                     // performed at runtime at a higher cost.
                     propertyName = RewriteAttachedPropertyPath(propertyName);
 
-                    writer.AppendLineInvariant($"new Windows.UI.Xaml.Setter(new Windows.UI.Xaml.TargetPropertyPath({elementName}, \"{propertyName}\"), {value})");
+                    writer.AppendLineInvariant($"new Windows.UI.Xaml.Setter(new Windows.UI.Xaml.TargetPropertyPath({elementName}, \"{propertyName}\"), {value.Replace("{", "{{").Replace("}", "}}")})");
                 }
             }
             else
@@ -3907,9 +3934,9 @@ namespace Uno.UI.SourceGenerators.XamlGenerator
             {
                 writer.AppendFormatInvariant("\"{1}\"", xamlObjectDefinition.Type.Name, DoubleEscape(initializer.Value?.ToString()));
             }
-            else
+			else
             {
-                writer.AppendFormatInvariant("new {0}({1})", GetGlobalizedTypeName(xamlObjectDefinition.Type.Name), initializer.Value);
+                writer.AppendFormatInvariant("new {0}({1}) /* test */", GetGlobalizedTypeName(xamlObjectDefinition.Type.Name), initializer.Value);
             }
         }
 
